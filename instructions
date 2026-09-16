@@ -1,0 +1,301 @@
+You are performing an authorized application security assessment of a web application backend that I own and am fully permitted to test.
+
+I will provide the backend source code as a ZIP archive.
+
+Your task is to perform a thorough secure code review of the entire backend and identify realistic security vulnerabilities, insecure design patterns, exposed secrets, authorization flaws, unsafe data flows, and weaknesses that could impact the confidentiality, integrity, or availability of the application.
+
+The source archive was obtained through an externally reachable behavior in my own application during authorized testing. Because of this, also investigate what code paths, configuration, deployment behavior, file-serving logic, debug functionality, backup handling, archive exposure, path traversal, static-file configuration, or other issue could have allowed backend source files to become externally accessible.
+
+Start by understanding the application before reporting findings.
+
+First map:
+
+- Application architecture
+- Frameworks and major dependencies
+- Authentication model
+- Authorization model
+- User roles and privilege levels
+- Externally reachable routes/endpoints
+- Middleware
+- Trust boundaries
+- Database/data stores
+- File storage
+- External services and integrations
+- Background workers/jobs
+- Sensitive data handled by the application
+- Security-sensitive sinks
+- Deployment/configuration files
+
+Then systematically review the entire archive.
+
+Pay particular attention to:
+
+- Broken access control
+- IDOR / BOLA
+- Horizontal and vertical privilege escalation
+- Missing authorization checks
+- Authentication bypass
+- Session management weaknesses
+- JWT/token handling vulnerabilities
+- OAuth implementation issues
+- Password reset and account recovery weaknesses
+- User enumeration
+- Account takeover paths
+- SQL injection
+- NoSQL injection
+- OS command injection
+- Template injection
+- LDAP/XPath/other injection classes where relevant
+- SSRF
+- Path traversal
+- Local/remote file inclusion
+- Unsafe file reads
+- Unsafe file downloads
+- Unsafe file upload
+- Arbitrary file overwrite
+- Remote code execution risks
+- Insecure deserialization
+- Prototype pollution
+- Unsafe object merging
+- Mass assignment / over-posting
+- Business logic vulnerabilities
+- Race conditions / TOCTOU
+- Client-controlled security decisions
+- Missing or inconsistent validation
+- Unsafe type coercion
+- Stored or reflected XSS originating from backend behavior
+- CSRF where relevant
+- CORS misconfiguration
+- WebSocket security issues
+- API key handling
+- Hardcoded credentials
+- Secrets in source code
+- Tokens, private keys, passwords, connection strings, or service credentials
+- Sensitive data exposure
+- Excessive API responses
+- Debug information
+- Stack traces
+- Verbose errors
+- Sensitive logging
+- Admin/debug/internal endpoints
+- Default credentials
+- Insecure default configuration
+- Environment-variable handling mistakes
+- Dangerous fallback values
+- Cryptographic mistakes
+- Weak password hashing
+- Weak token generation
+- Predictable identifiers
+- Insecure randomness
+- TLS/certificate-validation issues in outbound connections
+- Multi-tenant isolation failures
+- Database queries that could expose another user's or tenant's data
+- Unsafe shell/process execution
+- eval or equivalent dynamic execution
+- Regex DoS
+- Resource exhaustion
+- Missing rate limiting on security-sensitive functionality
+- Dependency usage that creates a concrete exploitable issue
+- Source-code disclosure
+- Backup/config/archive exposure
+- Development files accidentally deployed to production
+- Hidden or undocumented routes
+- Internal infrastructure disclosure
+
+Do not report a vulnerability simply because a dangerous function, library, or code pattern exists.
+
+For each suspected issue, trace the actual code path.
+
+Determine:
+
+1. Where attacker-controlled input enters the application
+2. What transformations or validation are applied
+3. What authentication is required
+4. What authorization checks are performed
+5. Which sensitive sink or security decision is reached
+6. Whether the path is realistically reachable
+7. What assumptions are required for exploitation
+
+Prefer high-confidence, evidence-backed findings over generic or speculative findings.
+
+For every finding provide:
+
+1. Finding title
+2. Severity: Critical / High / Medium / Low / Informational
+3. Confidence: High / Medium / Low
+4. CWE where applicable
+5. OWASP category where applicable
+6. Exact affected file
+7. Function/class/module
+8. Route or endpoint where applicable
+9. Relevant line numbers where possible
+10. Relevant code snippet
+11. Attacker-controlled entry point
+12. Source-to-sink data flow
+13. Authentication requirements
+14. Required user role/privileges
+15. Preconditions
+16. Realistic attack scenario
+17. Security impact
+18. Existing protections
+19. Why those protections are insufficient
+20. Recommended remediation
+21. Safer implementation example or patch suggestion
+22. Manual validation steps for my own test environment
+23. Any assumptions or uncertainty
+
+Explicitly distinguish between:
+
+- Confirmed vulnerability
+- Highly likely vulnerability
+- Potential issue requiring validation
+- Security hardening recommendation
+
+Do not inflate severity.
+
+If exploitation depends on configuration or runtime behavior that cannot be confirmed from the source, state that clearly.
+
+Also search for attack chains.
+
+For example:
+
+source disclosure
+→ exposed configuration
+→ credentials/API key
+→ authenticated access
+→ privilege escalation
+
+or:
+
+IDOR
+→ sensitive information disclosure
+→ account takeover
+
+or:
+
+SSRF
+→ internal service access
+→ credential/metadata exposure
+
+or:
+
+file upload
+→ controllable file location
+→ executable/servable path
+→ code execution
+
+or:
+
+information disclosure
+→ hidden endpoint discovery
+→ authorization bypass
+
+If multiple weaknesses can be chained, create a separate "Attack Chain" finding explaining each stage, prerequisite, and resulting impact.
+
+Because the source code was externally accessible, specifically determine whether the exposed files could contain:
+
+- Environment secrets
+- Database credentials
+- API keys
+- Signing keys
+- JWT secrets
+- Cloud credentials
+- Internal hostnames/IP addresses
+- Admin endpoints
+- Debug endpoints
+- Source maps
+- Backup files
+- Deployment credentials
+- CI/CD configuration
+- Third-party integration credentials
+
+Do not contact, authenticate to, scan, probe, or interact with any external service found inside the source code.
+
+Only analyze the supplied archive.
+
+Also identify areas where security controls appear to be implemented correctly. In particular review:
+
+- Authentication
+- Authorization
+- Tenant isolation
+- Input validation
+- Parameterized database queries
+- Secret handling
+- Password storage
+- Token generation
+- File handling
+- Session security
+
+This is important so the report distinguishes genuine weaknesses from false positives.
+
+Maintain a coverage checklist while reviewing the ZIP.
+
+Do not stop after examining only representative files.
+
+Review all security-relevant directories and explicitly report any files or directories that were not reviewed, could not be parsed, were generated/minified/vendor code, or require additional context.
+
+Do not spend excessive effort auditing third-party/vendor source unless application-specific use of that code creates a security issue.
+
+At the end provide:
+
+Executive Summary
+
+A concise explanation of the application's overall security posture.
+
+Top Findings
+
+The five most important vulnerabilities ranked by actual risk.
+
+Findings Table
+
+Include:
+
+Severity | Confidence | Finding | Affected Component | Authentication Required | CWE
+
+Attack Chains
+
+Any meaningful combinations of vulnerabilities.
+
+Source Disclosure Root Cause
+
+Your best assessment of how the backend source became externally accessible, including relevant code/configuration evidence.
+
+Secrets and Sensitive Information
+
+Summarize any credentials, tokens, keys, internal infrastructure information, or other sensitive data exposed in the archive.
+
+Do not unnecessarily reproduce full secret values. Mask them unless the exact value is required to identify the issue.
+
+Manual Verification
+
+List findings that should be confirmed dynamically and provide safe verification steps for my own authorized test environment.
+
+Positive Security Controls
+
+Security mechanisms that appear correctly implemented.
+
+Coverage
+
+List the major directories/components reviewed and anything that could not be reviewed.
+
+Remediation Priority
+
+Provide a recommended remediation order based on exploitability, impact, and attack-chain potential.
+
+Important:
+
+This is an authorized security review of software that I own.
+
+Do not modify the supplied files.
+
+Do not attempt to contact external systems.
+
+Do not perform actions against production infrastructure.
+
+Base conclusions on evidence in the supplied source code.
+
+Avoid generic checklist findings.
+
+Prefer fewer strong findings over many weak findings.
+
+If something is uncertain, say exactly what is uncertain and how I can validate it safely in my own environment.
