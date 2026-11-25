@@ -1,0 +1,128 @@
+                Note='Arguments and working directories omitted; script payloads and task ACLs not assessed.'
+            }
+        }
+    }
+    Write-Section '09 SMB shares and share permissions' {
+        foreach ($share in @(Get-SmbShare)) {
+            if ($share.Path -and $share.Name -notmatch '^[A-Za-z]\$$') { $script:Paths.Add($share.Path) }
+            try {
+                [pscustomobject]@{
+                    Name=$share.Name; Path=$share.Path; EncryptData=$share.EncryptData
+                    FolderEnumerationMode=[string]$share.FolderEnumerationMode
+                    Permissions=@(Get-SmbShareAccess -Name $share.Name | Select-Object AccountName, AccessControlType, AccessRight)
+                }
+            } catch { [pscustomobject]@{ Name=$share.Name; Status='UNAVAILABLE'; Error=$_.Exception.Message } }
+        }
+    }
+    Write-Section '10 File and parent directory permissions' {
+        foreach ($p in $ApplicationPath) {
+            $expanded=[Environment]::ExpandEnvironmentVariables($p)
+            if (-not [IO.Path]::IsPathRooted($expanded) -or $expanded -match '^\\\\') {
+                [pscustomobject]@{ Path=$p; Status='SKIPPED'; Reason='Provide an absolute local application path.' }
+            } else { $script:Paths.Add($expanded) }
+        }
+        $allPaths=New-Object 'System.Collections.Generic.List[string]'
+        foreach ($p in @($script:Paths | Sort-Object -Unique)) {
+            $allPaths.Add($p)
+            $parent=Split-Path -Path $p -Parent
+            if ($parent) { $allPaths.Add($parent) }
+        }
+        foreach ($p in @($allPaths | Sort-Object -Unique)) { Get-PathEvidence $p }
+        'Coverage: listed paths and immediate parents only; no recursive directory crawl or effective-access calculation.'
+    }
+    Write-Section '11 SMB server security configuration' {
+        Get-SmbServerConfiguration | Select-Object EnableSMB1Protocol, EnableSMB2Protocol, EnableSecuritySignature, RequireSecuritySignature, EncryptData, RejectUnencryptedAccess
+    }
+    Write-Section '12 SMB client security configuration' {
+        Get-SmbClientConfiguration | Select-Object EnableSecuritySignature, RequireSecuritySignature, EnableInsecureGuestLogons
+    }
+    Write-Section '13 IP and DNS configuration' {
+        Get-NetIPConfiguration | Select-Object InterfaceAlias, InterfaceIndex, IPv4Address, IPv6Address, IPv4DefaultGateway, DNSServer
+    }
+    Write-Section '14 Routes' {
+        Get-NetRoute | Select-Object DestinationPrefix, NextHop, InterfaceIndex, RouteMetric, AddressFamily
+    }
+    Write-Section '15 Listening and established TCP connections' {
+        $processes=@{}
+        Get-Process | ForEach-Object { $processes[[int]$_.Id]=$_.ProcessName }
+        Get-NetTCPConnection | Where-Object { $_.State -in @('Listen','Established') } |
+            Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess,
+                @{Name='ProcessName';Expression={$processes[[int]$_.OwningProcess]}}
+    }
+    Write-Section '16 UDP endpoints' {
+        Get-NetUDPEndpoint | Select-Object LocalAddress, LocalPort, OwningProcess
+    }
+    Write-Section '17 Firewall profiles' {
+        Get-NetFirewallProfile -PolicyStore ActiveStore | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction, AllowLocalFirewallRules
+        'Individual rules and upstream network filtering are not assessed.'
+    }
+    Write-Section '18 Selected security configuration registry evidence' {
+        $checks=@{
+            'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'=@('RunAsPPL','LmCompatibilityLevel','NoLMHash','RestrictAnonymous','EveryoneIncludesAnonymous')
+            'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0'=@('NtlmMinClientSec','NtlmMinServerSec','RestrictSendingNTLMTraffic','RestrictReceivingNTLMTraffic')
+            'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest'=@('UseLogonCredential')
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'=@('EnableLUA','LocalAccountTokenFilterPolicy')
+            'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'=@('fDenyTSConnections')
+            'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'=@('UserAuthentication','SecurityLayer','MinEncryptionLevel')
+            'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer'=@('AlwaysInstallElevated')
+            'HKCU:\SOFTWARE\Policies\Microsoft\Windows\Installer'=@('AlwaysInstallElevated')
+        }
+        foreach ($key in $checks.Keys | Sort-Object) {
+            foreach ($name in $checks[$key]) {
+                try {
+                    $value=Get-ItemPropertyValue -LiteralPath $key -Name $name
+                    [pscustomobject]@{ Key=$key; Name=$name; Value=$value; Status='PRESENT' }
+                } catch { [pscustomobject]@{ Key=$key; Name=$name; Status='ABSENT_OR_UNREADABLE'; Error=$_.Exception.Message } }
+            }
+        }
+        'Absent values require OS-specific default and policy validation. HKCU refers only to the collecting user.'
+    }
+    Write-Section '19 Defender status where available' {
+        Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, BehaviorMonitorEnabled, IsTamperProtected, AntivirusSignatureLastUpdated
+        'Other EDR products are not assessed by this section.'
+    }
+    Write-Section '20 Installed hotfix metadata' {
+        Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object HotFixID, Description, InstalledOn
+        'Win32_QuickFixEngineering is not a complete software/update inventory.'
+    }
+    Write-Section '21 Optional targeted Active Directory metadata' {
+        if (-not $IncludeAD) { 'SKIPPED: use -IncludeAD to query the current computer and its service/task domain user accounts.'; return }
+        Import-Module ActiveDirectory
+        $computer=Get-ADComputer -Identity $env:COMPUTERNAME -Properties MemberOf, ServicePrincipalName, TrustedForDelegation, TrustedToAuthForDelegation, 'msDS-AllowedToDelegateTo', 'msDS-AllowedToActOnBehalfOfOtherIdentity'
+        $computer | Select-Object Name, DistinguishedName, Enabled, MemberOf, ServicePrincipalName, TrustedForDelegation, TrustedToAuthForDelegation, 'msDS-AllowedToDelegateTo',
+            @{Name='RBCDDescriptor';Expression={
+                $v=$_.'msDS-AllowedToActOnBehalfOfOtherIdentity'
+                if ($v -is [byte[]]) { (New-Object System.Security.AccessControl.RawSecurityDescriptor($v,0)).GetSddlForm([System.Security.AccessControl.AccessControlSections]::All) }
+                elseif ($null -ne $v) { $v.ToString() }
+            }}
+        foreach ($account in @($script:Accounts | Sort-Object -Unique)) {
+            if ($account -notmatch '^([^\\]+)\\([^\\]+)$') { continue }
+            $domain=$Matches[1]; $user=$Matches[2]
+            if ($domain -in @('.',$env:COMPUTERNAME,'NT AUTHORITY','NT SERVICE','BUILTIN','IIS APPPOOL')) { continue }
+            if ($user.EndsWith('$')) {
+                [pscustomobject]@{ Account=$account; Status='NOT_ASSESSED'; Reason='Managed service/computer account requires a separate targeted review.' }; continue
+            }
+            try {
+                Get-ADUser -Identity $user -Server $domain -Properties MemberOf, ServicePrincipalName, PasswordNeverExpires, PasswordLastSet, AdminCount, TrustedForDelegation, TrustedToAuthForDelegation, AccountNotDelegated, DoesNotRequirePreAuth, 'msDS-AllowedToDelegateTo' |
+                    Select-Object SamAccountName, DistinguishedName, Enabled, MemberOf, ServicePrincipalName, PasswordNeverExpires, PasswordLastSet, AdminCount, TrustedForDelegation, TrustedToAuthForDelegation, AccountNotDelegated, DoesNotRequirePreAuth, 'msDS-AllowedToDelegateTo'
+            } catch { [pscustomobject]@{ Account=$account; Status='UNAVAILABLE'; Error=$_.Exception.Message } }
+        }
+        'Coverage excludes UPN/SID-form task identities, nested memberships, AD object ACLs, GPO rights, trusts and AD CS.'
+        'AdminCount or delegation flags alone do not establish a domain takeover path.'
+    }
+    Write-Section '22 Coverage and interpretation limits' {
+        'No vulnerability exploitation, credential extraction, password testing, remote login, or network scanning.'
+        'No IIS application pool identity inventory, database permission review, secret/configuration inspection, or third-party component CVE matching.'
+        'File ACLs and service SDDL are raw evidence, not a calculation of effective access or a confirmed escalation.'
+        'Connections are a point-in-time snapshot, not a complete architecture or proof of reachable remote services.'
+        'A failed section or unavailable row is an evidence gap; it does not imply a secure configuration.'
+        'This report alone cannot prove or rule out domain compromise.'
+    }
+    $script:Writer.WriteLine("`r`n========== COLLECTION STATUS ==========")
+    $script:Writer.WriteLine((ConvertTo-Json -InputObject @($script:Results.ToArray()) -Depth 5))
+    $script:Writer.WriteLine('Finished: ' + (Get-Date -Format o))
+    $script:Writer.WriteLine('END OF REPORT')
+} finally {
+    $script:Writer.Dispose()
+}
+Write-Host ('Report saved: ' + $OutputPath) -ForegroundColor Green
